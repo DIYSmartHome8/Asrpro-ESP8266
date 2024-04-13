@@ -1,0 +1,161 @@
+substitutions:
+  devicename: asrpro
+  friendly_name: $devicename
+  hw_version: v1.0
+
+esphome:
+  name: ${devicename}
+  friendly_name: ${friendly_name}
+  platform: ESP8266
+  board: d1_mini
+  esp8266_restore_from_flash: False
+  includes:
+    - components/asrpro_uart_command.h
+
+wifi:
+  networks:
+    - ssid: !secret ssid1
+      password: !secret ssid1_password
+  ap:
+    ssid: ${devicename}
+    password: diysmarthome
+    ap_timeout: 2min
+  fast_connect: False
+  power_save_mode: none
+  domain: .local
+
+captive_portal:
+
+ota:
+  password: !secret ota_password
+
+api:
+  encryption:
+    key: !secret api_key
+  reboot_timeout: 0s
+
+web_server:
+  port: 80
+  auth:
+    username: admin
+    password: !secret web_password
+
+# Enable logging
+logger:
+  esp8266_store_log_strings_in_flash: false
+  level: ERROR
+  # baud_rate: 0
+  baud_rate: 115200
+  hardware_uart: UART1
+
+uart:
+  id: asrpro_uart
+  tx_pin: GPIO15
+  rx_pin: GPIO13
+  baud_rate: 115200
+  parity: NONE
+  stop_bits: 1
+
+i2c:
+  sda: GPIO12
+  scl: GPIO14
+  scan: True
+  id: bus_a
+
+sensor:
+  - platform: adc
+    pin: A0
+    name: Brightness
+    update_interval: 50s
+    device_class: illuminance
+    unit_of_measurement: lx
+    filters:
+      - lambda: |-
+          return round((x / 10000.0) * -2000000.0 + 200);
+  - platform: sht3xd
+    heater_enabled: false
+    address: 0x44
+    i2c_id: bus_a
+    temperature:
+      name: Temperature
+      id: "temperature"
+    humidity:
+      name: Humidity
+      id: "humidity"
+    update_interval: 10s
+  - platform: wifi_signal
+    name: ESP RSSI
+    update_interval: 60s
+  - platform: template
+    name: ESP Free Memory Byte
+    id: id_esp_free_memory_byte
+    lambda: |-
+      return ESP.getFreeHeap();
+    filters:
+      - multiply: 0.001
+    unit_of_measurement: "KB"
+    update_interval: 30s
+  - platform: uptime
+    name: ESP Uptime Sensor
+    id: uptime_sensor
+    update_interval: 3600s
+    internal: true
+    on_raw_value:
+      then:
+        - text_sensor.template.publish:
+            id: uptime_human
+            state: !lambda |-
+              int seconds = round(id(uptime_sensor).raw_state);
+              int days = seconds / (24 * 3600);
+              seconds = seconds % (24 * 3600);
+              int hours = seconds / 3600;
+              seconds = seconds % 3600;
+              int minutes = seconds /  60;
+              seconds = seconds % 60;
+              return (
+                (days ? String(days) + "d " : "") +
+                (hours ? String(hours) + "h " : "") +
+                (minutes ? String(minutes) + "m " : "") +
+                (String(seconds) + "s")
+              ).c_str();
+
+button:
+  - platform: restart
+    name: ESP Restart
+    entity_category: config
+  - platform: factory_reset
+    disabled_by_default: True
+    name: ESP Factory Reset
+    id: factory_reset_all
+
+text_sensor:
+  - platform: template
+    name: ESP Uptime
+    id: uptime_human
+    icon: mdi:clock-start
+  - platform: wifi_info
+    ip_address:
+      name: ESP IP Address
+    mac_address:
+      name: ESP MAC
+  - platform: custom
+    lambda: |-
+      auto my_custom_sensor = new UartReadLineSensor(id(asrpro_uart));
+      App.register_component(my_custom_sensor);
+      return {my_custom_sensor};
+    text_sensors:
+      name: ASRPRO CMD
+      id: "uart_readline"
+
+light:
+  - platform: status_led
+    name: Status Led
+    id: light_status_led
+    output: status_led_gpio
+    internal: true
+
+output:
+  - platform: esp8266_pwm
+    id: status_led_gpio
+    pin: GPIO16
+    inverted: true
